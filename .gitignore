@@ -1,0 +1,10 @@
+node_modules/
+client/node_modules/
+server/node_modules/
+client/dist/
+server/mymech.db
+server/mymech.db-shm
+server/mymech.db-wal
+server/.env
+*.log
+.DS_Store
