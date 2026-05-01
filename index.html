@@ -1,0 +1,503 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Fruit Archer</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #080818;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    overflow: hidden;
+    touch-action: none;
+  }
+  canvas { display: block; cursor: pointer; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+const c = document.getElementById('c');
+const ctx = c.getContext('2d');
+
+const W = Math.min(480, window.innerWidth);
+const H = Math.min(700, window.innerHeight);
+c.width = W;
+c.height = H;
+const sc = W / 480;
+
+// Layout constants
+const FX = W / 2;
+const FY = H * 0.30;
+const FR = 82 * sc;
+const BX = W / 2;
+const BY = H - 72 * sc;
+const ALEN = 62 * sc;
+const ASPD = 11 * sc;
+const COL_A = 0.22;
+
+// Stars
+const stars = Array.from({ length: 90 }, () => ({
+  x: Math.random() * W,
+  y: Math.random() * H * 0.68,
+  r: (Math.random() * 1.5 + 0.3) * sc,
+  phase: Math.random() * Math.PI * 2,
+}));
+
+// Watermelon seed positions
+const SEEDS = [
+  [22, -10], [-24, 14], [10, 36], [-14, -32], [34, 20],
+  [-38, -4], [4, -46], [-32, 32], [42, -18], [18, 50],
+  [-10, 58], [55, 8],
+];
+
+let g = {};
+
+function initGame() {
+  g = {
+    phase: 'start',
+    rot: 0,
+    speed: 0.018,
+    dir: 1,
+    arrows: [],
+    fly: null,
+    score: 0,
+    best: +localStorage.getItem('fab') || 0,
+    canShoot: true,
+    shake: 0,
+    sx: 0, sy: 0,
+    isNewBest: false,
+  };
+}
+
+function startGame() {
+  g.phase = 'playing';
+  g.rot = 0;
+  g.speed = 0.018;
+  g.dir = 1;
+  g.arrows = [];
+  g.fly = null;
+  g.score = 0;
+  g.canShoot = true;
+  g.shake = 0;
+  g.isNewBest = false;
+}
+
+function doShoot() {
+  if (g.phase !== 'playing' || g.fly || !g.canShoot) return;
+  g.fly = { y: BY - 5 * sc };
+  g.canShoot = false;
+}
+
+function handleInput() {
+  if (g.phase === 'start') startGame();
+  else if (g.phase === 'dead') startGame();
+  else doShoot();
+}
+
+function normA(a) {
+  a = ((a % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
+  if (a > Math.PI) a -= 2 * Math.PI;
+  return a;
+}
+
+function angleDiff(a, b) {
+  return Math.abs(normA(a - b));
+}
+
+function update() {
+  if (g.phase !== 'playing') return;
+
+  g.rot += g.speed * g.dir;
+
+  if (g.shake > 0) {
+    g.sx = (Math.random() - 0.5) * 10 * sc;
+    g.sy = (Math.random() - 0.5) * 10 * sc;
+    g.shake--;
+  } else {
+    g.sx = g.sy = 0;
+  }
+
+  if (!g.fly) return;
+
+  g.fly.y -= ASPD;
+
+  // Arrow hits fruit boundary from below
+  if (g.fly.y <= FY + FR) {
+    // World angle is always PI/2 (bottom of fruit) since arrow x === FX
+    const localAngle = normA(Math.PI / 2 - g.rot);
+
+    const hit = g.arrows.some(a => angleDiff(a, localAngle) < COL_A);
+    g.fly = null;
+
+    if (hit) {
+      g.phase = 'dead';
+      g.isNewBest = g.score > g.best;
+      if (g.isNewBest) {
+        g.best = g.score;
+        localStorage.setItem('fab', g.best);
+      }
+      g.shake = 10;
+    } else {
+      g.arrows.push(localAngle);
+      g.score++;
+      g.canShoot = true;
+      const mag = 0.018 + Math.floor(g.score / 5) * 0.004;
+      g.speed = Math.min(mag, 0.065);
+      if (g.score % 10 === 0) g.dir *= -1;
+    }
+  }
+
+  // Arrow flew past without hitting
+  if (g.fly && g.fly.y < FY - FR - 30 * sc) {
+    g.fly = null;
+    g.canShoot = true;
+  }
+}
+
+// ── Drawing ──
+
+function drawBg() {
+  const grad = ctx.createLinearGradient(0, 0, 0, H);
+  grad.addColorStop(0, '#060614');
+  grad.addColorStop(1, '#16082c');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, W, H);
+
+  const t = performance.now() / 1000;
+  for (const s of stars) {
+    const a = 0.35 + 0.65 * Math.sin(s.phase + t * 1.3);
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, s.r, 0, 6.28);
+    ctx.fillStyle = `rgba(255,255,255,${a.toFixed(2)})`;
+    ctx.fill();
+  }
+}
+
+function drawFruit() {
+  ctx.save();
+  ctx.translate(FX, FY);
+  ctx.rotate(g.rot);
+
+  ctx.shadowColor = 'rgba(0,120,0,0.35)';
+  ctx.shadowBlur = 28 * sc;
+  ctx.shadowOffsetY = 10 * sc;
+
+  // Outer green rind
+  ctx.beginPath();
+  ctx.arc(0, 0, FR, 0, 6.28);
+  ctx.fillStyle = '#2e8f40';
+  ctx.fill();
+
+  // Dark green stripes
+  ctx.shadowBlur = 0;
+  ctx.shadowOffsetY = 0;
+  for (let i = 0; i < 7; i++) {
+    const a1 = (i / 7) * 6.28;
+    const a2 = ((i + 0.38) / 7) * 6.28;
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.arc(0, 0, FR, a1, a2);
+    ctx.closePath();
+    ctx.fillStyle = '#1c7030';
+    ctx.fill();
+  }
+
+  // Rim highlight
+  ctx.beginPath();
+  ctx.arc(0, 0, FR, 0, 6.28);
+  ctx.strokeStyle = 'rgba(255,255,255,0.12)';
+  ctx.lineWidth = 2 * sc;
+  ctx.stroke();
+
+  // White rind ring
+  ctx.beginPath();
+  ctx.arc(0, 0, FR - 12 * sc, 0, 6.28);
+  ctx.fillStyle = '#c8e8a0';
+  ctx.fill();
+
+  // Red flesh
+  ctx.beginPath();
+  ctx.arc(0, 0, FR - 21 * sc, 0, 6.28);
+  ctx.fillStyle = '#e84040';
+  ctx.fill();
+
+  // Specular
+  const hlGrad = ctx.createRadialGradient(-FR * 0.28, -FR * 0.28, 0, 0, 0, FR - 21 * sc);
+  hlGrad.addColorStop(0, 'rgba(255,150,150,0.45)');
+  hlGrad.addColorStop(1, 'rgba(180,10,10,0)');
+  ctx.beginPath();
+  ctx.arc(0, 0, FR - 21 * sc, 0, 6.28);
+  ctx.fillStyle = hlGrad;
+  ctx.fill();
+
+  // Seeds
+  ctx.fillStyle = '#111';
+  for (const [sx, sy] of SEEDS) {
+    ctx.save();
+    ctx.translate(sx * sc, sy * sc);
+    ctx.rotate(Math.atan2(sy, sx) + 0.3);
+    ctx.beginPath();
+    ctx.ellipse(0, 0, 3.5 * sc, 5.5 * sc, 0, 0, 6.28);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  ctx.restore();
+}
+
+function drawArrow(x1, y1, x2, y2) {
+  const angle = Math.atan2(y2 - y1, x2 - x1);
+
+  ctx.save();
+  ctx.shadowColor = 'rgba(0,0,0,0.55)';
+  ctx.shadowBlur = 5 * sc;
+
+  // Shaft
+  ctx.beginPath();
+  ctx.moveTo(x1, y1);
+  ctx.lineTo(x2, y2);
+  ctx.strokeStyle = '#9e6020';
+  ctx.lineWidth = 3 * sc;
+  ctx.lineCap = 'round';
+  ctx.stroke();
+
+  // Metal tip
+  ctx.save();
+  ctx.translate(x2, y2);
+  ctx.rotate(angle);
+  ctx.beginPath();
+  ctx.moveTo(9 * sc, 0);
+  ctx.lineTo(-5 * sc, -4 * sc);
+  ctx.lineTo(-2 * sc, 0);
+  ctx.lineTo(-5 * sc, 4 * sc);
+  ctx.closePath();
+  ctx.fillStyle = '#bbbbbb';
+  ctx.shadowColor = 'rgba(255,255,255,0.4)';
+  ctx.shadowBlur = 4 * sc;
+  ctx.fill();
+  ctx.restore();
+
+  // Red fletching
+  ctx.save();
+  ctx.translate(x1, y1);
+  ctx.rotate(angle);
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = '#cc2222';
+  ctx.beginPath();
+  ctx.moveTo(-4 * sc, 0);
+  ctx.lineTo(-19 * sc, -9 * sc);
+  ctx.lineTo(-14 * sc, 0);
+  ctx.closePath();
+  ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(-4 * sc, 0);
+  ctx.lineTo(-19 * sc, 9 * sc);
+  ctx.lineTo(-14 * sc, 0);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+
+  ctx.restore();
+}
+
+function drawStuckArrows() {
+  for (const localAngle of g.arrows) {
+    const wa = localAngle + g.rot;
+    const tx = FX + (FR - 16 * sc) * Math.cos(wa);
+    const ty = FY + (FR - 16 * sc) * Math.sin(wa);
+    const bx = FX + (FR + ALEN) * Math.cos(wa);
+    const by = FY + (FR + ALEN) * Math.sin(wa);
+    drawArrow(bx, by, tx, ty);
+  }
+}
+
+function drawFlyingArrow() {
+  if (!g.fly) return;
+  drawArrow(FX, g.fly.y + ALEN, FX, g.fly.y);
+}
+
+function drawBow() {
+  ctx.save();
+  ctx.translate(BX, BY);
+
+  ctx.shadowColor = 'rgba(0,0,0,0.5)';
+  ctx.shadowBlur = 10 * sc;
+
+  // Bow limb
+  ctx.beginPath();
+  ctx.moveTo(-8 * sc, -56 * sc);
+  ctx.bezierCurveTo(-44 * sc, -22 * sc, -44 * sc, 22 * sc, -8 * sc, 56 * sc);
+  ctx.strokeStyle = '#7a4f10';
+  ctx.lineWidth = 6 * sc;
+  ctx.lineCap = 'round';
+  ctx.stroke();
+
+  // String
+  ctx.beginPath();
+  ctx.moveTo(-8 * sc, -56 * sc);
+  ctx.lineTo(-8 * sc, 56 * sc);
+  ctx.strokeStyle = '#e8e0c0';
+  ctx.lineWidth = 1.5 * sc;
+  ctx.shadowBlur = 0;
+  ctx.stroke();
+
+  // Grip wrapping
+  ctx.strokeStyle = '#5a3808';
+  ctx.lineWidth = 3.5 * sc;
+  for (const yo of [-14, -5, 4, 13]) {
+    ctx.beginPath();
+    ctx.moveTo(-14 * sc, yo * sc);
+    ctx.lineTo(-2 * sc, yo * sc);
+    ctx.stroke();
+  }
+
+  ctx.restore();
+}
+
+function drawHUD() {
+  ctx.save();
+  ctx.textAlign = 'center';
+
+  // Score
+  ctx.font = `bold ${56 * sc}px Arial`;
+  ctx.fillStyle = '#ffffff';
+  ctx.shadowColor = 'rgba(0,0,0,0.7)';
+  ctx.shadowBlur = 12 * sc;
+  ctx.fillText(g.score, W / 2, 68 * sc);
+
+  // Best
+  ctx.font = `${15 * sc}px Arial`;
+  ctx.fillStyle = 'rgba(255,255,255,0.45)';
+  ctx.shadowBlur = 0;
+  ctx.fillText(`Best: ${g.best}`, W / 2, 90 * sc);
+
+  // Hint
+  if (g.canShoot && g.phase === 'playing') {
+    ctx.font = `${13 * sc}px Arial`;
+    ctx.fillStyle = 'rgba(255,255,255,0.3)';
+    ctx.fillText('Tap or press SPACE to shoot', W / 2, H - 12 * sc);
+  }
+
+  ctx.restore();
+}
+
+function drawPanel(lines, yCenter) {
+  // lines: [{text, font, color, shadow}]
+  const pad = 28 * sc;
+  let totalH = lines.reduce((s, l) => s + (l.gap || 44 * sc), 0);
+  const boxW = W * 0.76;
+  const boxH = totalH + pad * 2;
+  const boxX = (W - boxW) / 2;
+  const boxY = yCenter - boxH / 2;
+
+  ctx.save();
+  ctx.fillStyle = 'rgba(10,8,30,0.88)';
+  ctx.strokeStyle = 'rgba(255,255,255,0.12)';
+  ctx.lineWidth = 1.5 * sc;
+  roundRect(boxX, boxY, boxW, boxH, 14 * sc);
+  ctx.fill();
+  ctx.stroke();
+
+  let y = boxY + pad;
+  ctx.textAlign = 'center';
+  for (const l of lines) {
+    y += (l.gap || 44 * sc) / 2;
+    ctx.font = l.font;
+    ctx.fillStyle = l.color || '#fff';
+    ctx.shadowColor = l.shadow || 'transparent';
+    ctx.shadowBlur = l.shadowBlur || 0;
+    ctx.fillText(l.text, W / 2, y);
+    ctx.shadowBlur = 0;
+    y += (l.gap || 44 * sc) / 2;
+  }
+  ctx.restore();
+}
+
+function roundRect(x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y);
+  ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+  ctx.lineTo(x + w, y + h - r);
+  ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  ctx.lineTo(x + r, y + h);
+  ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+  ctx.lineTo(x, y + r);
+  ctx.quadraticCurveTo(x, y, x + r, y);
+  ctx.closePath();
+}
+
+function drawStart() {
+  ctx.save();
+  ctx.fillStyle = 'rgba(0,0,0,0.35)';
+  ctx.fillRect(0, 0, W, H);
+  ctx.restore();
+
+  drawPanel([
+    { text: 'FRUIT ARCHER', font: `bold ${42 * sc}px Arial`, color: '#ffffff', shadow: 'rgba(80,255,80,0.5)', shadowBlur: 22 * sc, gap: 58 * sc },
+    { text: 'Shoot arrows at the spinning', font: `${15 * sc}px Arial`, color: 'rgba(255,255,255,0.65)', gap: 28 * sc },
+    { text: 'watermelon. Don\'t hit', font: `${15 * sc}px Arial`, color: 'rgba(255,255,255,0.65)', gap: 28 * sc },
+    { text: 'an existing arrow!', font: `${15 * sc}px Arial`, color: 'rgba(255,255,255,0.65)', gap: 28 * sc },
+    { text: '', gap: 8 * sc },
+    { text: 'Tap or SPACE to start', font: `bold ${18 * sc}px Arial`, color: '#ffe555', gap: 36 * sc },
+  ], H / 2);
+}
+
+function drawDead() {
+  ctx.save();
+  ctx.fillStyle = 'rgba(0,0,0,0.62)';
+  ctx.fillRect(0, 0, W, H);
+  ctx.restore();
+
+  const bestLine = g.isNewBest && g.score > 0
+    ? { text: 'New Best!', font: `bold ${20 * sc}px Arial`, color: '#ffe555', gap: 34 * sc }
+    : { text: `Best: ${g.best}`, font: `${17 * sc}px Arial`, color: 'rgba(255,255,255,0.5)', gap: 34 * sc };
+
+  drawPanel([
+    { text: 'GAME OVER', font: `bold ${48 * sc}px Arial`, color: '#ff4040', shadow: '#ff0000', shadowBlur: 22 * sc, gap: 62 * sc },
+    { text: `Score: ${g.score}`, font: `bold ${30 * sc}px Arial`, color: '#fff', gap: 44 * sc },
+    bestLine,
+    { text: '', gap: 10 * sc },
+    { text: 'Tap or SPACE to play again', font: `bold ${17 * sc}px Arial`, color: 'rgba(255,255,255,0.78)', gap: 34 * sc },
+  ], H / 2);
+}
+
+function draw() {
+  ctx.save();
+  if (g.shake > 0) ctx.translate(g.sx, g.sy);
+
+  drawBg();
+  drawFruit();
+  drawStuckArrows();
+  drawFlyingArrow();
+  drawBow();
+  drawHUD();
+
+  if (g.phase === 'start') drawStart();
+  else if (g.phase === 'dead') drawDead();
+
+  ctx.restore();
+}
+
+function loop() {
+  update();
+  draw();
+  requestAnimationFrame(loop);
+}
+
+c.addEventListener('click', handleInput);
+c.addEventListener('touchstart', e => { e.preventDefault(); handleInput(); }, { passive: false });
+document.addEventListener('keydown', e => {
+  if (e.code === 'Space') { e.preventDefault(); handleInput(); }
+});
+
+initGame();
+loop();
+</script>
+</body>
+</html>
